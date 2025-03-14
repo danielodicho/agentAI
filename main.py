@@ -1,47 +1,34 @@
-import os
+from agents import Agent, Runner
 from dotenv import load_dotenv
-import openai
-import agentops
+import os
+from insta_digest import InstaDigestAgent
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Initialize the OpenAI client
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Example 1: Basic Agent Usage
+print("\n--- Example 1: Basic Agent Usage ---")
+agent = Agent(name="Assistant", instructions="You are a helpful assistant")
+result = Runner.run_sync(agent, "Write a haiku about recursion in programming.")
+print(result.final_output)
 
-# Initialize AgentOps
-agentops.init(api_key=os.getenv("AGENTOPS_API_KEY"))
+# Example 2: Instagram Digest Pipeline
+print("\n--- Example 2: Instagram Digest Pipeline ---")
+print("To run the Instagram Digest Pipeline, you would need to:")
+print("1. Install additional dependencies: playwright, pillow, fpdf")
+print("2. Set up required environment variables in .env file:")
+print("   - INSTAGRAM_USER: Your Instagram username")
+print("   - INSTAGRAM_PASS: Your Instagram password")
+print("   - EMAIL_USER: Your email address")
+print("   - EMAIL_PASS: Your email password or app password")
+print("   - RECEIVER_EMAIL: Email address to send the digest to")
+print("\nExample code to run the pipeline:")
+print("""
+# Uncomment to run the Instagram Digest Pipeline
+# Ensure you have set all required environment variables first
 
-# Create a new trace for tracking the agent session
-trace = agentops.trace()
-
-def get_completion(prompt):
-    """Get a completion from OpenAI API with agentops tracking"""
-    with trace.span("openai_completion") as span:
-        try:
-            response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            completion = response.choices[0].message.content
-            span.add_attribute("success", True)
-            return completion
-        except Exception as e:
-            span.add_attribute("success", False)
-            span.add_attribute("error", str(e))
-            raise e
-
-def main():
-    print("Simple Agent Demo using OpenAI, AgentOps, and python-dotenv")
-    
-    user_input = input("Ask a question: ")
-    with trace.span("user_query") as span:
-        span.add_attribute("query", user_input)
-        response = get_completion(user_input)
-        print("Agent response:", response)
-
-if __name__ == "__main__":
-    main()
+# insta_agent = InstaDigestAgent()
+# result = insta_agent.run_pipeline(os.getenv("RECEIVER_EMAIL"))
+# print(f"Pipeline Result: {result}")
+""")
