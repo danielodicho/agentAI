@@ -5,10 +5,12 @@ from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 from openai import OpenAI
 # Temporarily disable agentops
-# import agentops
+import agentops
 from datetime import datetime
 import glob
 
+
+agentops.init(os.getenv("AGENTOPS_API_KEY"))
 # Load environment variables
 load_dotenv()
 

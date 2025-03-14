@@ -5,6 +5,7 @@ from insta_digest import InstaDigestAgent
 
 # Load environment variables
 load_dotenv()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Example 1: Basic Agent Usage
