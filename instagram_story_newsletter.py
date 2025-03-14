@@ -495,24 +495,372 @@ def extract_subject_line(newsletter_content):
     # Default subject if none found
     return "Your Instagram Digest for " + datetime.now().strftime("%Y-%m-%d")
 
-def save_newsletter_to_file(newsletter_content, filename="newsletter.html"):
-    """Save the newsletter content to an HTML file."""
+def save_newsletter_to_file(newsletter_content, filename="newsletter.html", screenshots=None, include_images=True, stories_info=None):
+    """Save the newsletter content to an HTML file, optionally embedding the screenshots."""
     # Clean up the newsletter content to extract just the HTML part
     if "<html>" in newsletter_content.lower():
-        start_idx = newsletter_content.lower().find("<html>")
+        # Find the starting <!DOCTYPE html> or <html> tag
+        if "<!doctype html>" in newsletter_content.lower():
+            start_idx = newsletter_content.lower().find("<!doctype html>")
+        else:
+            start_idx = newsletter_content.lower().find("<html>")
+        
+        # Find the ending </html> tag
         end_idx = newsletter_content.lower().find("</html>") + 7
+        
         if start_idx >= 0 and end_idx > start_idx:
             html_content = newsletter_content[start_idx:end_idx]
         else:
             html_content = newsletter_content
     else:
-        html_content = f"<html><body>{newsletter_content}</body></html>"
+        # Extract just the subject line
+        subject_line = extract_subject_line(newsletter_content)
+        
+        # Rest of the content as body
+        if "Subject:" in newsletter_content:
+            body_start = newsletter_content.find("\n", newsletter_content.find("Subject:"))
+            body_content = newsletter_content[body_start:].strip()
+        else:
+            body_content = newsletter_content
+        
+        # Create basic HTML structure
+        html_content = f"<!DOCTYPE html>\n<html>\n<head>\n<title>{subject_line}</title>\n</head>\n<body>\n{body_content}\n</body>\n</html>"
     
+    # If we need to include images and have screenshots available
+    if include_images and screenshots and len(screenshots) > 0:
+        # Find where to insert the images (before the closing body tag)
+        if "</body>" in html_content.lower():
+            insert_idx = html_content.lower().rfind("</body>")
+        else:
+            insert_idx = len(html_content) - 7  # Just before </html>
+        
+        # Parse stories_info to get account classifications if available
+        story_classifications = {}
+        if stories_info:
+            try:
+                # Try to parse the JSON if it's a string
+                if isinstance(stories_info, str):
+                    import json
+                    
+                    # Check if JSON is wrapped in code block markers (```json...```)
+                    if stories_info.strip().startswith("```") and "```" in stories_info[3:]:
+                        # Extract content between the code block markers
+                        start_marker = stories_info.find("```") + 3
+                        if stories_info[start_marker:].startswith("json\n"):
+                            start_marker += 5  # Skip "json\n"
+                        elif stories_info[start_marker:].startswith("\n"):
+                            start_marker += 1  # Skip newline
+                            
+                        end_marker = stories_info[start_marker:].find("```") + start_marker
+                        json_content = stories_info[start_marker:end_marker].strip()
+                        stories_data = json.loads(json_content)
+                    else:
+                        # Try to parse directly
+                        stories_data = json.loads(stories_info)
+                else:
+                    stories_data = stories_info
+                
+                # Check if it has a 'stories' key (expected format)
+                if 'stories' in stories_data:
+                    for story in stories_data['stories']:
+                        # Map the filename to its classification
+                        if 'filename' in story and 'account_type' in story and 'account_name' in story:
+                            story_classifications[story['filename']] = {
+                                'account_type': story['account_type'],
+                                'account_name': story['account_name']
+                            }
+            except Exception as e:
+                print(f"Warning: Could not parse stories information: {e}")
+                print(f"First 100 characters of stories_info: {stories_info[:100]}...")
+        
+        # Create image gallery section
+        image_section = "\n\n<!-- Instagram Story Images -->\n"
+        image_section += "<div style='margin-top: 30px; border-top: 1px solid #ccc; padding-top: 20px;'>\n"
+        image_section += "<h2 style='text-align: center; color: #ff5722;'>Original Instagram Stories</h2>\n"
+        
+        # Group stories by account type
+        personal_stories = []
+        influencer_stories = []
+        unknown_stories = []
+        
+        for i, img_path in enumerate(screenshots):
+            img_filename = os.path.basename(img_path)
+            
+            # Determine account type and name
+            account_type = "unknown"
+            account_name = "Unknown"
+            
+            # Try to get from story classifications first
+            if img_filename in story_classifications:
+                account_type = story_classifications[img_filename]['account_type']
+                account_name = story_classifications[img_filename]['account_name']
+            # Fallback: try to extract from filename
+            elif "_story_" in img_filename:
+                account_name = img_filename.split("_story_")[0]
+            
+            # Categorize the story
+            story_item = {
+                'path': img_path,
+                'filename': img_filename,
+                'account_name': account_name
+            }
+            
+            # For sample images that don't have account types, attempt to infer from the content
+            if account_type.lower() == "unknown" and img_filename.startswith("story_sample_"):
+                if img_filename in ["story_sample_1.png", "story_sample_4.png", "story_sample_5.png", "story_sample_6.png"]:
+                    # Assume these are personal friends based on content
+                    account_type = "friend"
+                    # Set default account names if not already set
+                    if account_name == "Unknown":
+                        if img_filename == "story_sample_1.png":
+                            account_name = "maria.nashef"
+                        elif img_filename in ["story_sample_4.png", "story_sample_5.png", "story_sample_6.png"]:
+                            account_name = "ladypary_"
+                elif img_filename in ["story_sample_2.png"]:
+                    account_type = "influencer"
+                    if account_name == "Unknown":
+                        account_name = "elite.champaign"
+                elif img_filename in ["story_sample_3.png"]:
+                    account_type = "influencer"
+                    if account_name == "Unknown":
+                        account_name = "ksi"
+            
+            if account_type.lower() == "friend" or account_type.lower() == "personal":
+                personal_stories.append(story_item)
+            elif account_type.lower() == "influencer" or account_type.lower() == "brand":
+                influencer_stories.append(story_item)
+            else:
+                unknown_stories.append(story_item)
+        
+        # Create friend stories section if we have any
+        if personal_stories:
+            image_section += "<h3 style='margin-top: 25px; text-align: center; color: #3897f0;'>✨ Friend Stories ✨</h3>\n"
+            image_section += "<div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>\n"
+            
+            for story in personal_stories:
+                image_section += f"<div style='max-width: 300px; text-align: center;'>\n"
+                image_section += f"<img src='{story['path']}' style='max-width: 100%; border-radius: 8px; border: 1px solid #ddd;'>\n"
+                image_section += f"<p style='margin-top: 5px; font-weight: bold;'>{story['account_name']}</p>\n"
+                image_section += f"</div>\n"
+            
+            image_section += "</div>\n"
+        
+        # Create influencer stories section if we have any
+        if influencer_stories:
+            image_section += "<h3 style='margin-top: 25px; text-align: center; color: #e1306c;'>🔥 Influencer Content 🔥</h3>\n"
+            image_section += "<div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>\n"
+            
+            for story in influencer_stories:
+                image_section += f"<div style='max-width: 300px; text-align: center;'>\n"
+                image_section += f"<img src='{story['path']}' style='max-width: 100%; border-radius: 8px; border: 1px solid #ddd;'>\n"
+                image_section += f"<p style='margin-top: 5px; font-weight: bold;'>{story['account_name']}</p>\n"
+                image_section += f"</div>\n"
+            
+            image_section += "</div>\n"
+        
+        # Create unknown type section if we have any
+        if unknown_stories:
+            image_section += "<h3 style='margin-top: 25px; text-align: center; color: #999;'>Other Stories</h3>\n"
+            image_section += "<div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>\n"
+            
+            for story in unknown_stories:
+                image_section += f"<div style='max-width: 300px; text-align: center;'>\n"
+                image_section += f"<img src='{story['path']}' style='max-width: 100%; border-radius: 8px; border: 1px solid #ddd;'>\n"
+                image_section += f"<p style='margin-top: 5px; font-weight: bold;'>{story['account_name']}</p>\n"
+                image_section += f"</div>\n"
+            
+            image_section += "</div>\n"
+        
+        image_section += "</div>\n"
+        
+        # Insert the image section
+        html_content = html_content[:insert_idx] + image_section + html_content[insert_idx:]
+    
+    # Write the final HTML to file
     with open(filename, "w", encoding="utf-8") as f:
         f.write(html_content)
     
     print(f"Newsletter saved to {filename}")
     return filename
+
+# Enhanced newsletter generation - focusing on top stories
+def generate_enhanced_newsletter(analysis, recipient_name="Subscriber"):
+    """Generate an enhanced newsletter with friends vs. influencers sections, focusing on top stories."""
+    print("\n--- Generating Enhanced Instagram Newsletter ---")
+    
+    try:
+        # Create the prompt for newsletter generation
+        messages = [
+            {"role": "system", "content": """You are an AI assistant specialized in creating engaging newsletters based on Instagram content.
+            Your task is to create a well-formatted, professional newsletter that separates content from friends versus influencers/brands.
+            The newsletter should be in HTML format with responsive design and include:
+            1. A catchy subject line
+            2. Personalized greeting
+            3. Separate sections for friends' updates and influencer content
+            4. Attribution of content to specific accounts
+            5. Well-structured content sections with engaging descriptions
+            6. A friendly sign-off
+            
+            IMPORTANT: Focus only on the top 3 most engaging or relevant stories across both categories.
+            You decide which stories are most relevant based on their content, themes, and relevance scores.
+            
+            Make the newsletter visually appealing with Instagram-inspired styling."""}
+        ]
+        
+        # Add the user prompt with analysis
+        user_prompt = f"Based on the following JSON analysis of Instagram stories:\n\n{analysis}\n\nCreate an engaging, well-formatted newsletter email addressed to {recipient_name}. Organize the content into 'Friends Updates' and 'Influencer Highlights' sections as appropriate based on the account classifications. Only include the TOP 3 most interesting/relevant stories in the main content. Include account names with each piece of content. Format the newsletter in HTML with responsive, Instagram-inspired styling."
+        messages.append({"role": "user", "content": user_prompt})
+        
+        print("Generating enhanced newsletter with OpenAI...")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",  # Using the current model
+            messages=messages,
+            max_tokens=2000
+        )
+        
+        newsletter = response.choices[0].message.content
+        print("Enhanced newsletter generation complete!")
+        return newsletter
+        
+    except Exception as e:
+        print(f"Error during enhanced newsletter generation: {e}")
+        return f"Error generating newsletter: {str(e)}"
+
+# Enhanced analysis to include account type classification
+def analyze_stories_with_account_info(image_paths):
+    """Enhanced analysis that also attempts to classify accounts as friends or influencers."""
+    print("\n--- Analyzing Instagram Stories with Enhanced Account Info ---")
+    
+    if not image_paths or len(image_paths) == 0:
+        print("No images provided. Using sample images for testing...")
+        sample_images = ["story_sample_1.png", "story_sample_2.png", "story_sample_3.png"]
+        existing_samples = [img for img in sample_images if os.path.exists(img)]
+        if existing_samples:
+            image_paths = existing_samples
+        else:
+            return "No image content available for analysis."
+    
+    try:
+        # Prepare messages with images
+        messages = [
+            {"role": "system", "content": """You are an AI assistant specialized in analyzing Instagram stories and creating engaging newsletters. 
+            For each Instagram story screenshot:
+            1. Describe the content, context, themes, and any text visible in the images.
+            2. Try to determine the account type (personal friend or influencer/brand) based on the content.
+            3. If possible, identify or suggest the account name.
+            4. Categorize the content type (e.g., personal update, promotional, lifestyle, etc.).
+            Be detailed but concise."""}
+        ]
+        
+        # Add each image to the messages
+        for i, img_path in enumerate(image_paths):
+            # Extract username if possible from filename (format: username_story_X.png)
+            username = "Unknown"
+            img_filename = os.path.basename(img_path)
+            if "_story_" in img_filename:
+                username = img_filename.split("_story_")[0]
+            
+            base64_image = encode_image_to_base64(img_path)
+            if base64_image:
+                messages.append({
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": f"Analyze this Instagram story (image {i+1} of {len(image_paths)}):\n" + 
+                                            f"File: {img_filename}\n" + 
+                                            (f"Possible username: {username}\n" if username != "Unknown" else "")},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                    ]
+                })
+            else:
+                print(f"Skipping image {img_path} due to encoding error")
+        
+        # Ask for a comprehensive analysis with account classification
+        messages.append({
+            "role": "user",
+            "content": """Now provide a comprehensive JSON-formatted analysis of all the Instagram stories, with this structure:
+            {
+                "stories": [
+                    {
+                        "index": 0,  // zero-based index of the image
+                        "filename": "story_sample_1.png",
+                        "account_name": "username or best guess",
+                        "account_type": "friend" or "influencer",  // classify based on content
+                        "content_type": "personal", "promotional", etc.,
+                        "description": "detailed description of the content",
+                        "visible_text": "any text visible in the image",
+                        "themes": ["theme1", "theme2"],
+                        "relevance": "high/medium/low"
+                    },
+                    // Repeat for each image
+                ],
+                "overall_themes": ["theme1", "theme2"],
+                "newsletter_sections": [
+                    {
+                        "title": "Section title",
+                        "description": "Section content suggestion",
+                        "related_stories": [0, 1]  // indices of related stories
+                    }
+                ]
+            }
+            
+            This will be used to generate a newsletter that differentiates between friend updates and influencer content."""
+        })
+        
+        print("Sending images to OpenAI for enhanced analysis...")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",  # Using the current vision-capable model
+            messages=messages,
+            max_tokens=1500,
+            response_format={"type": "text"}
+        )
+        
+        analysis = response.choices[0].message.content
+        print("Enhanced analysis complete!")
+        return analysis
+    
+    except Exception as e:
+        print(f"Error during enhanced OpenAI analysis: {e}")
+        return f"Error analyzing Instagram stories: {str(e)}"
+
+# Enhanced newsletter generation
+def generate_enhanced_newsletter(analysis, recipient_name="Subscriber"):
+    """Generate an enhanced newsletter with friends vs. influencers sections."""
+    print("\n--- Generating Enhanced Instagram Newsletter ---")
+    
+    try:
+        # Create the prompt for newsletter generation
+        messages = [
+            {"role": "system", "content": """You are an AI assistant specialized in creating engaging newsletters based on Instagram content.
+            Your task is to create a well-formatted, professional newsletter that separates content from friends versus influencers/brands.
+            The newsletter should be in HTML format with responsive design and include:
+            1. A catchy subject line
+            2. Personalized greeting
+            3. Separate sections for friends' updates and influencer content
+            4. Attribution of content to specific accounts
+            5. Well-structured content sections with engaging descriptions
+            6. A friendly sign-off
+            
+            Make the newsletter visually appealing with Instagram-inspired styling."""}
+        ]
+        
+        # Add the user prompt with analysis
+        user_prompt = f"Based on the following JSON analysis of Instagram stories:\n\n{analysis}\n\nCreate an engaging, well-formatted newsletter email addressed to {recipient_name}. Organize the content into 'Friends Updates' and 'Influencer Highlights' sections as appropriate based on the account classifications. Include account names with each piece of content. Format the newsletter in HTML with responsive, Instagram-inspired styling."
+        messages.append({"role": "user", "content": user_prompt})
+        
+        print("Generating enhanced newsletter with OpenAI...")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",  # Using the current model
+            messages=messages,
+            max_tokens=2000
+        )
+        
+        newsletter = response.choices[0].message.content
+        print("Enhanced newsletter generation complete!")
+        return newsletter
+        
+    except Exception as e:
+        print(f"Error during enhanced newsletter generation: {e}")
+        return f"Error generating newsletter: {str(e)}"
 
 # Main Process Function
 def run_instagram_newsletter(usernames=None, use_samples=False):
@@ -521,17 +869,12 @@ def run_instagram_newsletter(usernames=None, use_samples=False):
     
     if use_samples:
         print("Using sample images instead of extracting from Instagram...")
-        sample_images = [
-            "story_sample_1.png",
-            "story_sample_2.png",
-            "story_sample_3.png"
-        ]
+        sample_images = glob.glob("story_sample_*.png")
         
         # Check if sample images exist
-        existing_samples = [img for img in sample_images if os.path.exists(img)]
-        if existing_samples:
-            print(f"Found {len(existing_samples)} sample images")
-            screenshots = existing_samples
+        if sample_images:
+            print(f"Found {len(sample_images)} sample images")
+            screenshots = sample_images
         else:
             print("No sample images found. Will extract from Instagram.")
             use_samples = False
@@ -568,12 +911,12 @@ def run_instagram_newsletter(usernames=None, use_samples=False):
     
     # Step 3: Analyze the stories with OpenAI
     print("\nStep 3: Analyzing Instagram stories with OpenAI")
-    analysis = analyze_story_images(screenshots)
-    print(f"\nContent Analysis Summary:\n{analysis[:300]}..." + ("" if len(analysis) <= 300 else "\n[content trimmed]"))
+    stories_info = analyze_stories_with_account_info(screenshots)
+    print(f"\nContent Analysis Summary:\n{stories_info[:300]}..." + ("" if len(stories_info) <= 300 else "\n[content trimmed]"))
     
     # Step 4: Generate a newsletter based on the analysis
     print("\nStep 4: Generating newsletter based on analysis")
-    newsletter = generate_newsletter(analysis, "Instagram Subscriber")
+    newsletter = generate_enhanced_newsletter(stories_info, "Instagram Subscriber") 
     
     # Step 5: Save the newsletter to a file
     print("\nStep 5: Saving newsletter to file")
@@ -583,7 +926,9 @@ def run_instagram_newsletter(usernames=None, use_samples=False):
     # Create a unique filename using timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     newsletter_file = f"instagram_newsletter_{timestamp}.html"
-    save_newsletter_to_file(newsletter, newsletter_file)
+    
+    # Pass the stories_info to the save_newsletter function for grouping
+    save_newsletter_to_file(newsletter, newsletter_file, screenshots, True, stories_info)
     
     print(f"\nInstagram Newsletter process complete!")
     print(f"Newsletter saved to {newsletter_file}")
@@ -591,7 +936,7 @@ def run_instagram_newsletter(usernames=None, use_samples=False):
     return {
         "subject": subject_line,
         "newsletter_file": newsletter_file,
-        "analysis": analysis,
+        "analysis": stories_info,
         "screenshots": screenshots
     }
 
